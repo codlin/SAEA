@@ -30,13 +30,12 @@
 *
 *****************************************************************************/
 
-using System;
-using System.Net;
-using System.Net.Sockets;
-
 using SAEA.Common;
 using SAEA.Common.Caching;
 using SAEA.Sockets.Interface;
+using System;
+using System.Net;
+using System.Net.Sockets;
 
 namespace SAEA.Sockets.Core
 {
@@ -67,12 +66,11 @@ namespace SAEA.Sockets.Core
         /// <param name="freetime"></param>
         public SessionManager(IContext<IUnpacker> context, int bufferSize, int count, EventHandler<SocketAsyncEventArgs> completed, TimeSpan freetime)
         {
-            _sessionCache = new MemoryCache<IUserToken>();
-
             _freeTime = freetime;
 
             _userTokenPool = new UserTokenPool(context, count, bufferSize, completed);
 
+            _sessionCache = new MemoryCache<IUserToken>();
             _sessionCache.OnChanged += _sessionCache_OnChanged;
         }
 

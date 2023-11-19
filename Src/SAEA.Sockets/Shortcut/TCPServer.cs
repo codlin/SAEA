@@ -27,12 +27,11 @@
 *版本号： v7.0.0.1
 *描述：
 *****************************************************************************/
+using SAEA.Sockets.Base;
+using SAEA.Sockets.Interface;
 using System;
 using System.Net;
 using System.Text;
-
-using SAEA.Sockets.Base;
-using SAEA.Sockets.Interface;
 
 namespace SAEA.Sockets.Shortcut
 {
@@ -42,7 +41,7 @@ namespace SAEA.Sockets.Shortcut
     /// <typeparam name="Coder"></typeparam>
     public class TCPServer<Coder> where Coder : class, IUnpacker
     {
-        IServerSocket _serverSokcet;
+        readonly IServerSocket _serverSokcet;
 
 
         public event Action<TCPServer<Coder>, string> OnAccept;

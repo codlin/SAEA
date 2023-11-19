@@ -30,21 +30,28 @@
 *
 *****************************************************************************/
 
+using SAEA.Sockets.Handler;
+using SAEA.Sockets.Interface;
+using SAEA.Sockets.Model;
 using System;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
-
-using SAEA.Common.Caching;
-using SAEA.Sockets.Handler;
-using SAEA.Sockets.Interface;
-using SAEA.Sockets.Model;
 
 namespace SAEA.Sockets.Core.Tcp
 {
     /// <summary>
     /// iocp 服务器 socket
     /// 支持使用自定义 IContext 来扩展
+    /// Socket server 要完成的事大概分几类：
+    /// 1. 记录监听的 socket；
+    /// 2. Server 资源释放，例如监听的 socket 资源释放
+    /// 3. 客户端会话管理及客户端个数 
+    /// 4. Socket 选项配置
+    /// 5. 启动和停止服务
+    /// 6. Server 相关的一系列事件，如新连接到达、连接关闭、服务器处理错误、数据到达等等事件
+    /// 7. 
+    /// IOCP 模式请参考：https://learn.microsoft.com/en-us/dotnet/api/system.net.sockets.socketasynceventargs?view=net-7.0#remarks
     /// </summary>
     public class IocpServerSocket : IServerSocket, IDisposable
     {
@@ -72,6 +79,7 @@ namespace SAEA.Sockets.Core.Tcp
 
         public event OnAcceptedHandler OnAccepted;
 
+        // 对于 OnError 的设计个人感觉有些模糊，因为把 Server 的错误和处理具体的某个 socket 的错误混在了一起（譬如说接收数据时出错）。
         public event OnErrorHandler OnError;
 
         public event OnDisconnectedHandler OnDisconnected;
@@ -119,8 +127,7 @@ namespace SAEA.Sockets.Core.Tcp
                         ipEndPoint = (new IPEndPoint(IPAddress.IPv6Any, SocketOption.Port));
                     else
                         ipEndPoint = (new IPEndPoint(IPAddress.Parse(SocketOption.IP), SocketOption.Port));
-                }
-                else
+                } else
                 {
                     _listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 
@@ -160,25 +167,30 @@ namespace SAEA.Sockets.Core.Tcp
             {
                 acceptArgs = new SocketAsyncEventArgs();
                 acceptArgs.Completed += new EventHandler<SocketAsyncEventArgs>(AccepteArgs_Completed);
-            }
-            else
+            } else
             {
+                // 异步回调 AccepteArgs_Completed 过来的 acceptArgs， 需要清掉上次接受的 socket
                 acceptArgs.AcceptSocket = null;
             }
             try
             {
                 if (!IsDisposed && _listener != null)
                 {
+                    // 如果返回 true，说明是 I/O 阻塞，等 I/O 完成时会调用注册 Completed 事件注册的回调函数。
                     if (!_listener.AcceptAsync(acceptArgs))
+                        // 如果返回 false，代表是同步返回，不会引发 SocketAsyncEventArgs.Completed 事件，即不会回到 AccepteArgs_Completed
                         ProcessAccepted(acceptArgs);
                 }
-            }
-            catch (Exception ex)
+            } catch (Exception ex)
             {
                 OnError?.Invoke("IocpServerSocket.ProcessAccepte", ex);
             }
         }
 
+        /// <summary>
+        /// 该函数会在多个上下文环境中操作，如果在多线程间共享变量，需要加锁
+        /// </summary>
+        /// <param name="acceptArgs"></param>
         private void ProcessAccepted(SocketAsyncEventArgs acceptArgs)
         {
             try
@@ -198,8 +210,10 @@ namespace SAEA.Sockets.Core.Tcp
 
                 socket.ReceiveTimeout = socket.SendTimeout = SocketOption.TimeOut;
 
+                // 从会话管理中取出一个用户令牌，同时把 socket 信息保存在缓存中。
+                // 会话管理中用户令牌池用来控制最大可接入的 socket 个数。
+                // 其大小由 SocketOption.Count 在设置的服务器支持的最大 socket 个数时指定，通常在创建 server 时指定。
                 var userToken = _sessionManager.BindUserToken(socket, SocketOption.TimeOut);
-
                 if (userToken == null)
                 {
                     return;
@@ -207,17 +221,16 @@ namespace SAEA.Sockets.Core.Tcp
 
                 var readArgs = userToken.ReadArgs;
 
+                // Interlocked 为多线程的共享变量提供原子操作。
                 Interlocked.Increment(ref _clientCounts);
 
                 OnAccepted?.Invoke(userToken);
 
                 ProcessReceive(readArgs);
-            }
-            catch (Exception ex)
+            } catch (Exception ex)
             {
                 OnError?.Invoke("IocpServerSocket.ProcessAccepted", ex);
-            }
-            finally
+            } finally
             {
                 ProcessAccept(acceptArgs);
             }
@@ -238,14 +251,13 @@ namespace SAEA.Sockets.Core.Tcp
                     {
                         var userToken = (IUserToken)e.UserToken;
                         Disconnect(userToken, new KernelException("Operation-exceptions，SocketAsyncOperation：" + e.LastOperation));
-                    }
-                    catch { }
+                    } catch { }
                     break;
             }
         }
 
         /// <summary>
-        /// 收到服务器收到数据时的处理方法
+        /// 服务器收到数据时的处理方法
         /// 需要继承者自行实现具体逻辑
         /// </summary>
         /// <param name="userToken"></param>
@@ -257,7 +269,8 @@ namespace SAEA.Sockets.Core.Tcp
 
 
         /// <summary>
-        /// 
+        /// 该函数会根据情况运行在不同的上下文，如果 AcceptAsync 是同步返回，则运行在服务器启动的上下文，
+        /// 如果是异步回调返回，则在线程池线程上下文（系统是否会切回到主上下文待查证）
         /// </summary>
         /// <param name="readArgs"></param>
         private void ProcessReceive(SocketAsyncEventArgs readArgs)
@@ -267,17 +280,17 @@ namespace SAEA.Sockets.Core.Tcp
             {
                 if (readArgs != null && userToken != null && userToken.Socket != null && userToken.Socket.Connected)
                 {
+                    // readArgs 是服务器接收新连接时从用户令牌池中取出的，在初始化令牌池时，Completed 事件的回调被注册为 IO_Completed 方法。
+                    // 因此当异步调用返回时会调用 IO_Completed 方法，在该方法中检查并处理发送或接收。
                     if (!userToken.Socket.ReceiveAsync(readArgs))
                         ProcessReceived(readArgs);
-                }
-                else
+                } else
                 {
                     if (userToken.Socket != null)
                         Disconnect(userToken, new KernelException("The remote client has been disconnected."));
                 }
 
-            }
-            catch (Exception exp)
+            } catch (Exception exp)
             {
                 var kex = new KernelException("An exception occurs when a message is received:" + exp.Message, exp);
                 Disconnect(userToken, kex);
@@ -286,6 +299,7 @@ namespace SAEA.Sockets.Core.Tcp
 
         /// <summary>
         /// 处理接收到数据
+        /// 不同的线程可能会同时调用该函数，线程间共享变量需要加锁
         /// </summary>
         /// <param name="readArgs"></param>
         void ProcessReceived(SocketAsyncEventArgs readArgs)
@@ -302,33 +316,31 @@ namespace SAEA.Sockets.Core.Tcp
             {
                 if (readArgs.SocketError == SocketError.Success && readArgs.BytesTransferred > 0)
                 {
+                    /// 保活
                     _sessionManager.Active(userToken.ID);
 
                     try
                     {
                         var buffer = readArgs.Buffer.AsSpan().Slice(readArgs.Offset, readArgs.BytesTransferred).ToArray();
                         OnServerReceiveBytes.Invoke(userToken, buffer);
-                        
+
                         //在复用数组和线程切换之间
                         //using (var pooledBytes = new PooledBytes(readArgs.BytesTransferred))
                         //{
                         //    pooledBytes.BlockCopy(readArgs.Buffer, readArgs.Offset, readArgs.BytesTransferred);
                         //    OnServerReceiveBytes.Invoke(userToken, pooledBytes.Bytes);
                         //}
-                    }
-                    catch (Exception ex)
+                    } catch (Exception ex)
                     {
                         OnError?.Invoke(userToken.ID, ex);
                     }
 
                     ProcessReceive(readArgs);
-                }
-                else
+                } else
                 {
                     Disconnect(userToken, null);
                 }
-            }
-            catch (Exception exp)
+            } catch (Exception exp)
             {
                 var kex = new KernelException("An exception occurs when a message is received:" + exp.Message, exp);
                 Disconnect(userToken, kex);
@@ -367,13 +379,11 @@ namespace SAEA.Sockets.Core.Tcp
                             ProcessSended(writeArgs);
                         }
                     }
-                }
-                catch (Exception ex)
+                } catch (Exception ex)
                 {
                     OnError?.Invoke($"An exception occurs when a message is sending:{userToken?.ID}", ex);
                 }
-            }
-            else
+            } else
             {
                 OnError?.Invoke($"An exception occurs when a message is sending:{userToken?.ID}", new TimeoutException("Sending data timeout"));
             }
@@ -422,8 +432,7 @@ namespace SAEA.Sockets.Core.Tcp
                         break;
                     }
                 }
-            }
-            catch (Exception ex)
+            } catch (Exception ex)
             {
                 kex = new KernelException("An exception occurs when a message is sending:" + ex.Message, ex);
             }
@@ -461,8 +470,7 @@ namespace SAEA.Sockets.Core.Tcp
                 _sessionManager.Active(userToken.ID);
 
                 return userToken.Socket.BeginSend(data, 0, data.Length, SocketFlags.None, null, null);
-            }
-            catch (Exception ex)
+            } catch (Exception ex)
             {
                 Disconnect(userToken);
                 throw new KernelException("An exception occurs when a message is sending:" + ex.Message, ex);
@@ -557,19 +565,16 @@ namespace SAEA.Sockets.Core.Tcp
             try
             {
                 _listener.Close(10 * 1000);
-            }
-            catch { }
+            } catch { }
             try
             {
                 _sessionManager.Clear();
-            }
-            catch { }
+            } catch { }
             try
             {
                 _listener.Dispose();
                 _listener = null;
-            }
-            catch { }
+            } catch { }
         }
 
         public void Dispose()
@@ -578,11 +583,7 @@ namespace SAEA.Sockets.Core.Tcp
             {
                 Stop();
                 IsDisposed = true;
-            }
-            catch { }
+            } catch { }
         }
-
-
-
     }
 }

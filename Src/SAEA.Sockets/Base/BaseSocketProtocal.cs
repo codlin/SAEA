@@ -32,7 +32,6 @@
 using SAEA.Common;
 using SAEA.Sockets.Interface;
 using SAEA.Sockets.Model;
-using System;
 using System.Collections.Generic;
 
 namespace SAEA.Sockets.Base
@@ -52,7 +51,7 @@ namespace SAEA.Sockets.Base
             get; set;
         }
 
-        public Byte[] Content
+        public byte[] Content
         {
             get; set;
         }

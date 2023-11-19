@@ -29,6 +29,8 @@
 *描述：
 *
 *****************************************************************************/
+using SAEA.Sockets.Handler;
+using SAEA.Sockets.Interface;
 using System;
 using System.IO;
 using System.Net;
@@ -37,9 +39,6 @@ using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
-
-using SAEA.Sockets.Handler;
-using SAEA.Sockets.Interface;
 
 namespace SAEA.Sockets.Core.Tcp
 {
@@ -120,8 +119,7 @@ namespace SAEA.Sockets.Core.Tcp
                     _serverIPEndpint = (new IPEndPoint(IPAddress.IPv6Any, SocketOption.Port));
                 else
                     _serverIPEndpint = (new IPEndPoint(IPAddress.Parse(SocketOption.IP), SocketOption.Port));
-            }
-            else
+            } else
             {
                 _socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 
@@ -185,8 +183,7 @@ namespace SAEA.Sockets.Core.Tcp
                     _stream = new SslStream(new NetworkStream(_socket, true), false, InternalUserCertificateValidationCallback);
 
                     ((SslStream)_stream).AuthenticateAsClient(SocketOption.IP, LoadCertificates(), SocketOption.SslProtocol, true);
-                }
-                else
+                } else
                 {
                     _stream = new NetworkStream(_socket, true);
                 }
@@ -219,8 +216,7 @@ namespace SAEA.Sockets.Core.Tcp
                     var sslStream = new SslStream(stream, false, ucc);
                     await sslStream.AuthenticateAsClientAsync(SocketOption.IP, func.Invoke(), SocketOption.SslProtocol, !ignoreCerErrs).ConfigureAwait(false);
                     _stream = sslStream;
-                }
-                else
+                } else
                 {
                     _stream = stream;
                 }
@@ -241,8 +237,7 @@ namespace SAEA.Sockets.Core.Tcp
                 var result = ConnectAsync().Result;
 
                 callBack?.Invoke(result);
-            }
-            catch
+            } catch
             {
                 callBack?.Invoke(SocketError.SocketError);
             }
@@ -265,8 +260,7 @@ namespace SAEA.Sockets.Core.Tcp
                         _stream = new SslStream(new NetworkStream(_socket, true), false, InternalUserCertificateValidationCallback);
 
                         ((SslStream)_stream).AuthenticateAsClient(SocketOption.IP, LoadCertificates(), SocketOption.SslProtocol, true);
-                    }
-                    else
+                    } else
                     {
                         _stream = new NetworkStream(_socket, true);
                     }
@@ -278,8 +272,7 @@ namespace SAEA.Sockets.Core.Tcp
                     this.Connected = true;
 
                     return SocketError.Success;
-                }
-                catch
+                } catch
                 {
                     return SocketError.SocketError;
                 }
@@ -384,12 +377,10 @@ namespace SAEA.Sockets.Core.Tcp
                 {
                     _socket.Shutdown(SocketShutdown.Both);
                     OnDisconnected?.Invoke(SocketOption.IP + ":" + SocketOption.Port, null);
-                }
-                catch (Exception ex)
+                } catch (Exception ex)
                 {
                     OnDisconnected?.Invoke(SocketOption.IP + ":" + SocketOption.Port, ex);
-                }
-                finally
+                } finally
                 {
                     _socket.Close();
                 }

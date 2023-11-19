@@ -23,8 +23,6 @@
 *****************************************************************************/
 using System;
 using System.Globalization;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace SAEA.Common
 {
@@ -38,9 +36,9 @@ namespace SAEA.Common
         {
             try
             {
+                // 在此方法中打印了品牌标识 SAEA Socket、作者以及版本信息
                 Console.WriteLine(SAEAVersion.ConsoleTitle);
-            }
-            catch { }
+            } catch { }
         }
 
         public static DateTime Now
